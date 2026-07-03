@@ -55,6 +55,20 @@
 "status.failed" = "Recovery failed. %@";
 "status.stopping" = "Stopping…";
 
+/* Advanced mode */
+"menu.options" = "Options";
+"menu.advanced" = "Advanced mode";
+"adv.fullScan" = "Full scan";
+"adv.paranoid" = "Paranoid (verify each file)";
+"adv.bruteForce" = "Brute force (fragmented files)";
+"adv.keepCorrupted" = "Keep corrupted files";
+"folder.corrupted" = "corrupted";
+"status.remaining" = "about %@ left";
+"time.under1min" = "less than 1 min";
+"time.m" = "%d min";
+"time.hm" = "%dh %dmin";
+"status.lowSpace" = "Not enough free space in the destination: %@ available, about %@ needed. Choose another folder.";
+
 /* Updates */
 "update.available" = "Version %@ is available.";
 "update.button" = "Update";

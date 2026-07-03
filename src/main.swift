@@ -67,6 +67,13 @@ final class AppState: ObservableObject {
     @Published var finished = false
     @Published var resultDir: URL? = nil
 
+    // Modalità avanzata + opzioni (visibili solo se advancedMode = true).
+    @Published var advancedMode = false
+    @Published var optFullScan = false          // scansione completa (wholespace) invece di solo cancellati
+    @Published var optParanoid = false          // verifica ogni file
+    @Published var optBruteForce = false        // brute force (file frammentati)
+    @Published var optKeepCorrupted = false     // mantieni file corrotti
+
     // Accesso completo al disco: nil = non verificato, true = ok, false = mancante.
     @Published var hasFullDiskAccess: Bool? = nil
 
@@ -79,6 +86,9 @@ final class AppState: ObservableObject {
 
     private var monitorTimer: Timer? = nil
     private var imageSize: Int64 = 0
+    private var recoveryStart: Date? = nil     // istante d'inizio del recupero
+    // Campioni (istante, offset letto) per stimare la velocità RECENTE (finestra mobile).
+    private var speedSamples: [(t: Date, offset: Int64)] = []
 
     // Repo GitHub per gli aggiornamenti.
     let updateRepo = "marcelloemme/PhotoRec-Portable"
@@ -238,6 +248,27 @@ final class AppState: ObservableObject {
               let dict = try? PropertyListSerialization.propertyList(from: d, options: [], format: nil) as? [String: Any],
               let size = (dict["Size"] as? NSNumber)?.int64Value else { return 0 }
         return size
+    }
+
+    // Spazio libero (byte) del volume che contiene un percorso.
+    nonisolated static func freeSpaceBytes(atPath path: String) -> Int64 {
+        guard let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
+              let free = attrs[.systemFreeSize] as? NSNumber else { return 0 }
+        return free.int64Value
+    }
+
+    // Keyword photorec per lo schema partizioni del disco (per lo scope "solo cancellati").
+    // FDisk/MBR -> partition_i386 ; GPT -> partition_gpt ; APM -> partition_mac ; altro -> partition_none.
+    nonisolated static func partitionKeyword(forDisk diskDev: String) -> String {
+        guard let info = runCapture("/usr/sbin/diskutil", ["info", "-plist", diskDev]),
+              let d = info.data(using: .utf8),
+              let dict = try? PropertyListSerialization.propertyList(from: d, options: [], format: nil) as? [String: Any]
+        else { return "partition_none" }
+        let content = (dict["Content"] as? String)?.lowercased() ?? ""
+        if content.contains("fdisk") { return "partition_i386" }
+        if content.contains("guid")  { return "partition_gpt" }
+        if content.contains("apple") { return "partition_mac" }
+        return "partition_none"
     }
 
     // MARK: Accesso completo al disco
@@ -461,6 +492,15 @@ final class AppState: ObservableObject {
         return cmd
     }
 
+    // Opzioni avanzate (options,...) da anteporre a fileopt. Valide solo in modalità avanzata.
+    private func optionsCommand() -> String {
+        guard advancedMode else { return "" }
+        var opts: [String] = []
+        opts.append(optParanoid ? (optBruteForce ? "paranoid_bf" : "paranoid") : "paranoid_no")
+        if optKeepCorrupted { opts.append("keep_corrupted_file") }
+        return opts.isEmpty ? "" : "options," + opts.joined(separator: ",") + ","
+    }
+
     // MARK: RECUPERO
 
     // Percorsi correnti del recupero (per monitor, annulla, riorganizzazione).
@@ -472,6 +512,21 @@ final class AppState: ObservableObject {
         guard let diskID = selectedDiskID else { statusText = L("status.selectDisk"); return }
         guard let dest = destination else { statusText = L("status.chooseDest"); return }
 
+        let diskDevCheck = diskID.replacingOccurrences(of: "/dev/", with: "")
+        // C1 — Controllo spazio: se la destinazione non ha abbastanza spazio, avviso e blocco.
+        // Stima: scansione completa può produrre fino alla dimensione del device; per "solo
+        // cancellati" molto meno, ma resto prudente e richiedo almeno il 50% della dimensione device.
+        let deviceSize = diskSizeBytes(diskDevCheck)
+        let freeSpace = Self.freeSpaceBytes(atPath: dest.path)
+        let needed = (advancedMode && optFullScan) ? deviceSize : deviceSize / 2
+        if deviceSize > 0 && freeSpace > 0 && freeSpace < needed {
+            let neededStr = ByteCountFormatter.string(fromByteCount: needed, countStyle: .file)
+            let freeStr = ByteCountFormatter.string(fromByteCount: freeSpace, countStyle: .file)
+            statusText = String(format: L("status.lowSpace"), freeStr, neededStr)
+            finished = false
+            return
+        }
+
         let rawDevice = diskID.replacingOccurrences(of: "/dev/disk", with: "/dev/rdisk")
         let diskDev = diskID.replacingOccurrences(of: "/dev/", with: "")
         let destPath = dest.path
@@ -481,26 +536,53 @@ final class AppState: ObservableObject {
         let recupPath = work + "/recup_dir"
         let logPath = work + "/log.txt"
         let pidF = work + "/photorec.pid"
-        let batch = "partition_none,\(fileoptCommand()),search"
+        let plog = work + "/photorec.log"    // log leggibile di photorec (/log) per il tempo
         let pr = photorecPath
         let uid = getuid()
+
+        // Scope: default = solo file cancellati (freespace) col tipo di partizione rilevato;
+        // in modalità avanzata con "scansione completa" = wholespace su partition_none.
+        let fullScan = advancedMode && optFullScan
+        let partKeyword = Self.partitionKeyword(forDisk: diskDev)
+        let opts = optionsCommand()
+        let fo = fileoptCommand()
+
+        // Comando batch principale.
+        let mainBatch: String
+        if fullScan {
+            mainBatch = "partition_none,\(opts)options,wholespace,\(fo),search"
+        } else {
+            mainBatch = "\(partKeyword),\(opts)options,freespace,\(fo),search"
+        }
 
         self.workDir = work
         self.pidFile = pidF
 
+        // Funzione shell per contare i file recuperati (esclude report.xml).
+        // Fallback: se lo scope "solo cancellati" trova 0 file, rilancio in scansione completa
+        // nella stessa esecuzione (una sola password).
+        let fallbackBlock = fullScan ? "" : """
+         ; \
+        FILES=$(/usr/bin/find '\(work)' -type f ! -name 'report.xml' ! -name 'photorec.log' ! -name 'log.txt' 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ') ; \
+        if [ "$FILES" = "0" ]; then \
+          '\(pr)' /log /d '\(recupPath)' /cmd '\(rawDevice)' partition_none,\(opts)options,wholespace,\(fo),search >> '\(logPath)' 2>&1 ; \
+        fi
+        """
+
         // Un solo comando come root (una sola password):
-        // prepara cartella → smonta la card → lancia photorec scrivendone il PID →
-        // aspetta la fine → rimonta → riassegna i file all'utente.
+        // prepara cartella → smonta la card → lancia photorec (con /log) scrivendone il PID →
+        // aspetta la fine → eventuale fallback completo → rimonta → riassegna i file all'utente.
         let shell = """
-        rm -rf '\(work)' ; mkdir -p '\(work)' ; \
+        rm -rf '\(work)' ; mkdir -p '\(work)' ; cd '\(work)' ; \
         /usr/sbin/diskutil unmountDisk '\(diskDev)' || true ; \
-        '\(pr)' /d '\(recupPath)' /cmd '\(rawDevice)' \(batch) > '\(logPath)' 2>&1 & \
+        '\(pr)' /log /d '\(recupPath)' /cmd '\(rawDevice)' \(mainBatch) > '\(logPath)' 2>&1 & \
         PRPID=$! ; echo $PRPID > '\(pidF)' ; \
-        wait $PRPID ; PRSTATUS=$? ; \
+        wait $PRPID ; PRSTATUS=$?\(fallbackBlock) ; \
         /usr/sbin/diskutil mountDisk '\(diskDev)' || true ; \
         /usr/sbin/chown -R \(uid) '\(work)' 2>/dev/null || true ; \
         exit $PRSTATUS
         """
+        _ = plog
 
         isRunning = true
         isCancelling = false
@@ -508,6 +590,8 @@ final class AppState: ObservableObject {
         progress = 0
         filesFound = 0
         resultDir = dest
+        recoveryStart = Date()
+        speedSamples = []
         statusText = L("status.auth")
 
         startMonitor(destBase: work, diskDev: diskDev)
@@ -526,12 +610,14 @@ final class AppState: ObservableObject {
                     self.isRunning = false; self.finished = true; self.isCancelling = false
                     self.hasFullDiskAccess = false
                     self.statusText = L("status.noFDA.short")
+                    try? FileManager.default.removeItem(atPath: work)   // pulizia cartella di lavoro
                     return
                 }
                 // Annullato dall'utente al dialogo password.
                 if case .cancelled = outcome, !cancelled {
                     self.isRunning = false; self.finished = true
                     self.statusText = L("status.cancelled")
+                    try? FileManager.default.removeItem(atPath: work)   // pulizia cartella di lavoro
                     return
                 }
 
@@ -598,18 +684,24 @@ final class AppState: ObservableObject {
             guard fm.fileExists(atPath: dir) else { break }
             if let files = try? fm.contentsOfDirectory(atPath: dir) {
                 for f in files {
-                    if f == "report.xml" { continue }
+                    if f == "report.xml" || f == "photorec.log" { continue }
                     let src = "\(dir)/\(f)"
                     var ext = (f as NSString).pathExtension.lowercased()
                     if ext.isEmpty { ext = "altri" }
-                    let destDir = "\(destination)/\(ext)"
-                    try? fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-                    let target = uniqueDestination(dir: destDir, filename: f)
+                    // PhotoRec: i file corrotti iniziano con 'b', le miniature con 't'.
+                    // I corrotti vanno in una sottocartella dedicata dentro il tipo.
+                    let subdir: String
+                    if f.hasPrefix("b") {
+                        subdir = "\(destination)/\(ext)/\(L("folder.corrupted"))"
+                    } else {
+                        subdir = "\(destination)/\(ext)"
+                    }
+                    try? fm.createDirectory(atPath: subdir, withIntermediateDirectories: true)
+                    let target = uniqueDestination(dir: subdir, filename: f)
                     do {
                         try fm.moveItem(atPath: src, toPath: target)
                         moved += 1
                     } catch {
-                        // fallback: copia se il move fallisce (es. cross-device)
                         if (try? fm.copyItem(atPath: src, toPath: target)) != nil { moved += 1 }
                     }
                 }
@@ -707,9 +799,38 @@ final class AppState: ObservableObject {
                 self.filesFound = count
                 if size > 0 { self.progress = pct }
                 let pctStr = size > 0 ? " — \(Int(self.progress * 100))%" : ""
-                self.statusText = String(format: L("status.recovering"), count, pctStr)
+                let etaStr = self.etaFromRecentSpeed(offset: lastOffset, size: size)
+                self.statusText = String(format: L("status.recovering"), count, pctStr) + etaStr
             }
         }
+    }
+
+    // Stima "tempo rimanente" dalla velocità degli ultimi ~30 secondi (finestra mobile).
+    // Reagisce ai rallentamenti: se photorec legge più lentamente, la stima si allunga.
+    private func etaFromRecentSpeed(offset: Int64, size: Int64) -> String {
+        guard size > 0, offset > 0 else { return "" }
+        let now = Date()
+        speedSamples.append((now, offset))
+        // tengo solo gli ultimi 30 secondi di campioni
+        speedSamples.removeAll { now.timeIntervalSince($0.t) > 30 }
+        guard let oldest = speedSamples.first,
+              now.timeIntervalSince(oldest.t) >= 5 else { return "" }  // servono ≥5s di storia
+        let dt = now.timeIntervalSince(oldest.t)
+        let dOffset = Double(offset - oldest.offset)
+        guard dt > 0, dOffset > 0 else { return "" }   // se fermo, nessuna stima
+        let bytesPerSec = dOffset / dt
+        let remainingBytes = Double(size - offset)
+        let remaining = remainingBytes / bytesPerSec
+        return " · " + String(format: L("status.remaining"), Self.hmsShort(remaining))
+    }
+
+    // Stima leggibile: "meno di 1 min", "5 min", "1 h 20 min".
+    nonisolated static func hmsShort(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        if s < 60 { return L("time.under1min") }
+        let h = s / 3600, m = (s % 3600) / 60
+        if h > 0 { return String(format: L("time.hm"), h, m) }
+        return String(format: L("time.m"), m)
     }
 
     nonisolated private static func scanProgress(destBase: String) -> (Int, Int64) {
@@ -758,7 +879,7 @@ final class AppState: ObservableObject {
 // MARK: - Interfaccia
 
 struct ContentView: View {
-    @StateObject var state = AppState()
+    @ObservedObject var state: AppState
 
     // Font unico per tutta l'interfaccia.
     let ui = Font.system(size: 13)
@@ -853,7 +974,7 @@ struct ContentView: View {
 
                 Divider()
                 // Area stato+progresso ad ALTEZZA FISSA: non fa mai cambiare la finestra.
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     if state.isRunning || state.finished {
                         ProgressView(value: state.progress)
                     }
@@ -866,6 +987,21 @@ struct ContentView: View {
                     Spacer(minLength: 0)
                 }
                 .frame(height: 40, alignment: .top)
+
+                // Opzioni avanzate — tra l'area stato e il tasto, senza divider.
+                if state.advancedMode {
+                    LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading),
+                                        GridItem(.flexible(), alignment: .leading)],
+                              alignment: .leading, spacing: 2) {
+                        Toggle(L("adv.fullScan"), isOn: $state.optFullScan).font(ui)
+                        Toggle(L("adv.paranoid"), isOn: $state.optParanoid).font(ui)
+                        Toggle(L("adv.bruteForce"), isOn: $state.optBruteForce).font(ui)
+                        Toggle(L("adv.keepCorrupted"), isOn: $state.optKeepCorrupted).font(ui)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+                }
 
                 HStack {
                     Button(action: { state.start() }) {
@@ -891,8 +1027,8 @@ struct ContentView: View {
                 }
 
                 // Riga finale: versione + link alla repo, piccola e centrata.
-                (Text("PhotoRec Portable \(state.appVersion) · ")
-                 + Text("github.com/\(state.updateRepo)").underline())
+                (Text("v\(state.appVersion) · ")
+                 + Text("GitHub").underline())
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -999,8 +1135,16 @@ struct CategoryButton: View {
 
 @main
 struct PhotoRecFacileApp: App {
+    @StateObject var state = AppState()
+
     var body: some Scene {
-        WindowGroup { ContentView() }
+        WindowGroup { ContentView(state: state) }
             .windowResizability(.contentSize)
+            .commands {
+                CommandMenu(L("menu.options")) {
+                    Toggle(L("menu.advanced"), isOn: $state.advancedMode)
+                        .keyboardShortcut("a", modifiers: [.command, .shift])
+                }
+            }
     }
 }

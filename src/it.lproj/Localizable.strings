@@ -55,6 +55,20 @@
 "status.failed" = "Recupero non riuscito. %@";
 "status.stopping" = "Interruzione in corso…";
 
+/* Advanced mode */
+"menu.options" = "Opzioni";
+"menu.advanced" = "Modalità avanzata";
+"adv.fullScan" = "Scansione completa";
+"adv.paranoid" = "Paranoid (verifica ogni file)";
+"adv.bruteForce" = "Brute force (file frammentati)";
+"adv.keepCorrupted" = "Mantieni i file corrotti";
+"folder.corrupted" = "corrotti";
+"status.remaining" = "circa %@ rimanenti";
+"time.under1min" = "meno di 1 min";
+"time.m" = "%d min";
+"time.hm" = "%dh %dmin";
+"status.lowSpace" = "Spazio insufficiente nella destinazione: %@ disponibili, servono circa %@. Scegli un'altra cartella.";
+
 /* Updates */
 "update.available" = "È disponibile la versione %@.";
 "update.button" = "Aggiorna";
