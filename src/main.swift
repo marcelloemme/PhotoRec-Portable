@@ -247,9 +247,14 @@ final class AppState: ObservableObject {
                 if err.isEmpty || err.contains("Permission denied") { verdict = true; break }
             }
             DispatchQueue.main.async {
-                self?.hasFullDiskAccess = verdict
+                guard let self = self else { return }
+                self.hasFullDiskAccess = verdict
                 if !verdict {
-                    self?.statusText = L("status.noFDA.hint")
+                    self.statusText = L("status.noFDA.hint")
+                } else if self.statusText == L("status.noFDA.hint")
+                            || self.statusText == L("status.noFDA.short") {
+                    // L'accesso è stato concesso: rimuovo l'avviso residuo.
+                    self.statusText = ""
                 }
             }
         }
@@ -833,8 +838,9 @@ struct ContentView: View {
                 }
 
                 Divider()
-                ProgressView(value: state.progress)
-                    .opacity(state.isRunning || state.finished ? 1 : 0.3)
+                if state.isRunning || state.finished {
+                    ProgressView(value: state.progress)
+                }
                 if !state.statusText.isEmpty {
                     Text(state.statusText)
                         .font(ui)
@@ -864,6 +870,18 @@ struct ContentView: View {
                         Button(L("btn.openFolder")) { NSWorkspace.shared.open(dir) }
                     }
                 }
+
+                // Riga finale: versione + link alla repo, piccola e centrata.
+                (Text("PhotoRec Portable \(state.appVersion) · ")
+                 + Text("github.com/\(state.updateRepo)").underline())
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .onTapGesture {
+                        if let url = URL(string: "https://github.com/\(state.updateRepo)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
         }
         .font(ui)
         .padding(16)
