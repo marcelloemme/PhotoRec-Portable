@@ -1,0 +1,64 @@
+/* Header */
+"header.intro" = " is an app to recover deleted or lost files from SD cards, USB drives, and disks. It's a front end for ";
+"header.author" = ", created by Christophe Grenier — ";
+
+/* Sections */
+"section.source" = "Source disk";
+"section.destination" = "Destination folder";
+"section.what" = "What to recover";
+"dest.none" = "No folder selected";
+
+/* Buttons */
+"btn.refresh" = "Refresh";
+"btn.choose" = "Choose…";
+"btn.start" = "Start recovery";
+"btn.recovering" = "Recovering…";
+"btn.cancel" = "Cancel";
+"btn.stopping" = "Stopping…";
+"btn.openFolder" = "Open folder";
+"btn.openPrivacy" = "Open Privacy Settings";
+"btn.recheck" = "Done, check again";
+
+/* Categories */
+"cat.photo" = "Photos";
+"cat.audio" = "Audio";
+"cat.archive" = "Archives";
+"cat.video" = "Video";
+"cat.doc" = "Documents";
+"cat.all" = "Everything";
+
+/* Disk kind */
+"media.ssd" = "internal SSD";
+"disk.internal" = "internal";
+"disk.external" = "external/removable";
+
+/* Warnings & banner */
+"warn.sameDisk" = "⚠️ This folder is on the SAME disk you're recovering from. Choose a different disk: saving here may overwrite the files you want to recover.";
+"fda.title" = "⚠️ A permission is needed to read cards and disks";
+"fda.enable" = "Enable \"PhotoRec Portable\" under \"Full Disk Access\":";
+"fda.steps" = "1. Click \"Open Privacy Settings\"\n2. Turn on (or add with +) \"PhotoRec Portable\"\n3. If it was already there, REMOVE it and add it again\n4. Come back and click \"Done, check again\"";
+
+/* Status messages */
+"status.detecting" = "Detecting connected disks…";
+"status.noDisk" = "No disk detected. Connect an SD card or disk and click Refresh.";
+"status.selectDisk" = "Select a disk first.";
+"status.chooseDest" = "Choose a destination folder first.";
+"status.auth" = "Authorization required: enter your administrator password…";
+"status.recovering" = "Recovering… %d files found so far%@.";
+"status.sorting" = "Sorting recovered files by type…";
+"status.done" = "Done. %d files saved, sorted by type.";
+"status.stopped" = "Recovery stopped. %d files saved (sorted by type).";
+"status.cancelled" = "Cancelled (no password entered).";
+"status.noFDA.short" = "PhotoRec Portable doesn't have Full Disk Access.";
+"status.noFDA.hint" = "Full Disk Access is missing: follow the instructions above.";
+"status.doneWarn" = "Recovery finished with warnings. %d files saved. (%@)";
+"status.failed" = "Recovery failed. %@";
+"status.stopping" = "Stopping…";
+
+/* Dialogs */
+"dlg.stopTitle" = "Stop the recovery?";
+"dlg.stopBody" = "Files recovered so far will be kept and sorted by type. Do you want to stop?";
+"dlg.stop" = "Stop";
+"dlg.keep" = "Keep recovering";
+"panel.chooseFolder" = "Choose where to save the recovered files";
+"panel.choose" = "Choose";

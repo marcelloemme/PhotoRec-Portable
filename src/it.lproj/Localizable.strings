@@ -1,0 +1,64 @@
+/* Header */
+"header.intro" = " è un'app per recuperare file cancellati o persi da SD, chiavette e dischi. È un'interfaccia per ";
+"header.author" = ", creato da Christophe Grenier — ";
+
+/* Sections */
+"section.source" = "Disco di input";
+"section.destination" = "Cartella di output";
+"section.what" = "Cosa recuperare";
+"dest.none" = "Nessuna cartella scelta";
+
+/* Buttons */
+"btn.refresh" = "Aggiorna";
+"btn.choose" = "Scegli…";
+"btn.start" = "Avvia recupero";
+"btn.recovering" = "Recupero in corso…";
+"btn.cancel" = "Annulla";
+"btn.stopping" = "Interruzione…";
+"btn.openFolder" = "Apri cartella";
+"btn.openPrivacy" = "Apri Impostazioni Privacy";
+"btn.recheck" = "Ho fatto, ricontrolla";
+
+/* Categories */
+"cat.photo" = "Foto";
+"cat.audio" = "Audio";
+"cat.archive" = "Archivi";
+"cat.video" = "Video";
+"cat.doc" = "Documenti";
+"cat.all" = "Tutto";
+
+/* Disk kind */
+"media.ssd" = "SSD interno";
+"disk.internal" = "interno";
+"disk.external" = "esterno/rimovibile";
+
+/* Warnings & banner */
+"warn.sameDisk" = "⚠️ Questa cartella è sullo STESSO disco da cui stai recuperando. Scegline uno diverso: salvare qui può sovrascrivere i file da recuperare.";
+"fda.title" = "⚠️ Serve un permesso per leggere schede e dischi";
+"fda.enable" = "Abilita «PhotoRec Portable» in «Accesso completo al disco»:";
+"fda.steps" = "1. Premi «Apri Impostazioni Privacy»\n2. Attiva (o aggiungi col +) «PhotoRec Portable»\n3. Se era già presente, TOGLILA e riaggiungila\n4. Torna qui e premi «Ho fatto, ricontrolla»";
+
+/* Status messages */
+"status.detecting" = "Rilevo i dischi collegati…";
+"status.noDisk" = "Nessun disco rilevato. Collega la scheda SD o il disco e premi Aggiorna.";
+"status.selectDisk" = "Seleziona prima un disco.";
+"status.chooseDest" = "Scegli prima una cartella di destinazione.";
+"status.auth" = "Autorizzazione richiesta: inserisci la password amministratore…";
+"status.recovering" = "Recupero in corso… %d file trovati finora%@.";
+"status.sorting" = "Riordino i file recuperati per tipo…";
+"status.done" = "Recupero completato. %d file salvati, divisi per tipo.";
+"status.stopped" = "Recupero interrotto. %d file salvati (divisi per tipo).";
+"status.cancelled" = "Operazione annullata (nessuna password inserita).";
+"status.noFDA.short" = "Manca l'Accesso completo al disco per PhotoRec Portable.";
+"status.noFDA.hint" = "Manca l'Accesso completo al disco: segui le istruzioni in alto.";
+"status.doneWarn" = "Recupero terminato con avvisi. %d file salvati. (%@)";
+"status.failed" = "Recupero non riuscito. %@";
+"status.stopping" = "Interruzione in corso…";
+
+/* Dialogs */
+"dlg.stopTitle" = "Interrompere il recupero?";
+"dlg.stopBody" = "I file già recuperati fino ad ora verranno mantenuti e organizzati per tipo. Vuoi interrompere?";
+"dlg.stop" = "Interrompi";
+"dlg.keep" = "Continua il recupero";
+"panel.chooseFolder" = "Scegli la cartella dove salvare i file recuperati";
+"panel.choose" = "Scegli";
