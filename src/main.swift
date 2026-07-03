@@ -89,6 +89,17 @@ final class AppState: ObservableObject {
 
     var photorecPath: String { Bundle.main.bundlePath + "/Contents/Resources/bin/photorec" }
 
+    // Riporta l'interfaccia allo stato "pulito" dopo un recupero completato,
+    // quando l'utente cambia una qualsiasi impostazione. Non tocca un recupero in corso.
+    func resetResultStateIfNeeded() {
+        guard finished, !isRunning else { return }
+        finished = false
+        progress = 0
+        filesFound = 0
+        resultDir = nil
+        statusText = ""
+    }
+
     // true se la cartella di destinazione sta sullo STESSO disco fisico della sorgente.
     @Published var destinationOnSameDisk = false
 
@@ -432,6 +443,7 @@ final class AppState: ObservableObject {
                 categories[allIdx].enabled = false
             }
         }
+        resetResultStateIfNeeded()
     }
 
     // MARK: Comando fileopt dalle categorie selezionate
@@ -774,8 +786,10 @@ struct ContentView: View {
 
                 Divider()
 
+                // Avvisi (FDA/update): appaiono solo quando servono e occupano spazio solo allora.
+                // Eventi rari (una tantum o a ogni aggiornamento), quindi far crescere la
+                // finestra in quel caso è accettabile.
                 if state.updateAvailable { updateBanner }
-
                 if state.hasFullDiskAccess == false { fdaBanner }
 
                 // Disco di input
@@ -784,7 +798,7 @@ struct ContentView: View {
                     HStack {
                         Picker("", selection: Binding(
                             get: { state.selectedDiskID ?? "" },
-                            set: { state.selectedDiskID = $0; state.updateSameDiskWarning() })) {
+                            set: { state.selectedDiskID = $0; state.updateSameDiskWarning(); state.resetResultStateIfNeeded() })) {
                             ForEach(state.disks) { disk in
                                 Text((disk.isRemovable ? "💾 " : "🖥️ ") + disk.title).tag(disk.id)
                             }
@@ -838,15 +852,20 @@ struct ContentView: View {
                 }
 
                 Divider()
-                if state.isRunning || state.finished {
-                    ProgressView(value: state.progress)
+                // Area stato+progresso ad ALTEZZA FISSA: non fa mai cambiare la finestra.
+                VStack(alignment: .leading, spacing: 4) {
+                    if state.isRunning || state.finished {
+                        ProgressView(value: state.progress)
+                    }
+                    if !state.statusText.isEmpty {
+                        Text(state.statusText)
+                            .font(ui)
+                            .foregroundColor(state.finished ? .green : .primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
                 }
-                if !state.statusText.isEmpty {
-                    Text(state.statusText)
-                        .font(ui)
-                        .foregroundColor(state.finished ? .green : .primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .frame(height: 40, alignment: .top)
 
                 HStack {
                     Button(action: { state.start() }) {
@@ -952,6 +971,7 @@ struct ContentView: View {
         if panel.runModal() == .OK {
             state.destination = panel.url
             state.updateSameDiskWarning()
+            state.resetResultStateIfNeeded()
         }
     }
 }
