@@ -55,6 +55,14 @@
 "status.failed" = "Recovery failed. %@";
 "status.stopping" = "Stopping…";
 
+/* Updates */
+"update.available" = "Version %@ is available.";
+"update.button" = "Update";
+"update.updating" = "Updating…";
+"update.downloading" = "Downloading the update…";
+"update.installing" = "Installing… the app will restart.";
+"update.failed" = "Update failed. Try downloading it manually from GitHub.";
+
 /* Dialogs */
 "dlg.stopTitle" = "Stop the recovery?";
 "dlg.stopBody" = "Files recovered so far will be kept and sorted by type. Do you want to stop?";

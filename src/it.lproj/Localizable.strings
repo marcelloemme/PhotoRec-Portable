@@ -55,6 +55,14 @@
 "status.failed" = "Recupero non riuscito. %@";
 "status.stopping" = "Interruzione in corso…";
 
+/* Updates */
+"update.available" = "È disponibile la versione %@.";
+"update.button" = "Aggiorna";
+"update.updating" = "Aggiornamento…";
+"update.downloading" = "Scarico l'aggiornamento…";
+"update.installing" = "Installazione… l'app si riavvierà.";
+"update.failed" = "Aggiornamento non riuscito. Scaricalo a mano da GitHub.";
+
 /* Dialogs */
 "dlg.stopTitle" = "Interrompere il recupero?";
 "dlg.stopBody" = "I file già recuperati fino ad ora verranno mantenuti e organizzati per tipo. Vuoi interrompere?";

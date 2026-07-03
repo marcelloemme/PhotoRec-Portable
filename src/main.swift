@@ -70,8 +70,22 @@ final class AppState: ObservableObject {
     // Accesso completo al disco: nil = non verificato, true = ok, false = mancante.
     @Published var hasFullDiskAccess: Bool? = nil
 
+    // Aggiornamenti
+    @Published var updateAvailable = false
+    @Published var updateVersion = ""          // es. "1.1"
+    @Published var updateURL: URL? = nil        // ZIP della release
+    @Published var updatePageURL: URL? = nil    // pagina release su GitHub
+    @Published var isUpdating = false
+
     private var monitorTimer: Timer? = nil
     private var imageSize: Int64 = 0
+
+    // Repo GitHub per gli aggiornamenti.
+    let updateRepo = "marcelloemme/PhotoRec-Portable"
+
+    var appVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
+    }
 
     var photorecPath: String { Bundle.main.bundlePath + "/Contents/Resources/bin/photorec" }
 
@@ -259,6 +273,145 @@ final class AppState: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    // MARK: Aggiornamenti (GitHub Releases)
+
+    // Controlla in background se esiste una release più recente.
+    func checkForUpdate() {
+        let repo = updateRepo
+        let current = appVersion
+        DispatchQueue.global().async { [weak self] in
+            guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else { return }
+            var req = URLRequest(url: url)
+            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            req.timeoutInterval = 8
+            guard let (data, resp) = try? Self.syncData(req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let tag = json["tag_name"] as? String else { return }
+
+            let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+            // URL dello ZIP allegato alla release (primo asset .zip), o pagina release.
+            var zipURL: URL? = nil
+            if let assets = json["assets"] as? [[String: Any]] {
+                for a in assets {
+                    if let name = a["name"] as? String, name.hasSuffix(".zip"),
+                       let u = a["browser_download_url"] as? String { zipURL = URL(string: u); break }
+                }
+            }
+            let pageURL = (json["html_url"] as? String).flatMap { URL(string: $0) }
+
+            if Self.isNewer(latest, than: current) {
+                DispatchQueue.main.async {
+                    self?.updateVersion = latest
+                    self?.updateURL = zipURL
+                    self?.updatePageURL = pageURL
+                    self?.updateAvailable = true
+                }
+            }
+        }
+    }
+
+    // Confronta due versioni "1.2.3" numericamente. true se a > b.
+    nonisolated static func isNewer(_ a: String, than b: String) -> Bool {
+        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x > y }
+        }
+        return false
+    }
+
+    // Scarica lo ZIP della nuova versione, lo scompatta e avvia la sostituzione assistita.
+    func performUpdate() {
+        guard let zip = updateURL else {
+            // Nessuno ZIP allegato: apro la pagina release.
+            if let p = updatePageURL { NSWorkspace.shared.open(p) }
+            return
+        }
+        isUpdating = true
+        statusText = L("update.downloading")
+        let bundlePath = Bundle.main.bundlePath
+        DispatchQueue.global().async { [weak self] in
+            let tmp = NSTemporaryDirectory() + "PhotoRecPortable_update"
+            let fm = FileManager.default
+            try? fm.removeItem(atPath: tmp)
+            try? fm.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+            let zipPath = tmp + "/update.zip"
+
+            // Scarico lo ZIP.
+            guard let (data, resp) = try? Self.syncData(URLRequest(url: zip)),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  (try? data.write(to: URL(fileURLWithPath: zipPath))) != nil else {
+                DispatchQueue.main.async { self?.isUpdating = false; self?.statusText = L("update.failed") }
+                return
+            }
+            // Scompatto con ditto.
+            let unzip = Process()
+            unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            unzip.arguments = ["-x", "-k", zipPath, tmp]
+            try? unzip.run(); unzip.waitUntilExit()
+
+            // Cerco il .app scompattato.
+            guard let newApp = Self.findApp(in: tmp) else {
+                DispatchQueue.main.async { self?.isUpdating = false; self?.statusText = L("update.failed") }
+                return
+            }
+
+            // Script che aspetta la chiusura, sostituisce il bundle e riavvia.
+            let script = tmp + "/replace.sh"
+            let sh = """
+            #!/bin/bash
+            sleep 1
+            while /bin/ps -p \(getpid()) > /dev/null 2>&1; do sleep 0.5; done
+            /usr/bin/ditto '\(newApp)' '\(bundlePath)'
+            /usr/bin/xattr -dr com.apple.quarantine '\(bundlePath)' 2>/dev/null
+            /usr/bin/open '\(bundlePath)'
+            /bin/rm -rf '\(tmp)'
+            """
+            try? sh.write(toFile: script, atomically: true, encoding: .utf8)
+            let chmod = Process()
+            chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+            chmod.arguments = ["+x", script]
+            try? chmod.run(); chmod.waitUntilExit()
+
+            DispatchQueue.main.async {
+                self?.statusText = L("update.installing")
+                // Lancio lo script in background e chiudo l'app.
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/bin/bash")
+                p.arguments = [script]
+                try? p.run()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+        }
+    }
+
+    nonisolated static func findApp(in dir: String) -> String? {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(atPath: dir) else { return nil }
+        for i in items where i.hasSuffix(".app") { return "\(dir)/\(i)" }
+        return nil
+    }
+
+    // Richiesta sincrona (siamo già su un thread di background).
+    nonisolated static func syncData(_ req: URLRequest) throws -> (Data, URLResponse) {
+        let sem = DispatchSemaphore(value: 0)
+        var result: (Data, URLResponse)? = nil
+        var err: Error? = nil
+        URLSession.shared.dataTask(with: req) { d, r, e in
+            if let d = d, let r = r { result = (d, r) }
+            err = e
+            sem.signal()
+        }.resume()
+        sem.wait()
+        if let result = result { return result }
+        throw err ?? URLError(.badServerResponse)
     }
 
     // Attiva/disattiva una categoria. "Tutto" è esclusivo: se lo attivo spengo le altre;
@@ -616,6 +769,8 @@ struct ContentView: View {
 
                 Divider()
 
+                if state.updateAvailable { updateBanner }
+
                 if state.hasFullDiskAccess == false { fdaBanner }
 
                 // Disco di input
@@ -717,7 +872,25 @@ struct ContentView: View {
         .onAppear {
             state.refreshDisks()
             state.checkFullDiskAccess()
+            state.checkForUpdate()
         }
+    }
+
+    var updateBanner: some View {
+        HStack {
+            Image(systemName: "arrow.down.circle")
+            Text(String(format: L("update.available"), state.updateVersion))
+                .font(ui)
+            Spacer(minLength: 0)
+            Button(state.isUpdating ? L("update.updating") : L("update.button")) {
+                state.performUpdate()
+            }
+            .disabled(state.isUpdating)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.5)))
     }
 
     var fdaBanner: some View {
