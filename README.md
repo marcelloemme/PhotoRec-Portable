@@ -7,7 +7,7 @@ PhotoRec Portable is a friendly graphical front end for **PhotoRec**, the powerf
 It's **portable**: everything it needs is inside the app. No Homebrew, no Terminal, no extra downloads.
 
 <p align="center">
-  <img src="docs/main-window.jpg" alt="PhotoRec Portable main window" width="560">
+  <img src="docs/main-window-2.jpg" alt="PhotoRec Portable main window" width="560">
 </p>
 
 ---
@@ -22,7 +22,7 @@ It's **portable**: everything it needs is inside the app. No Homebrew, no Termin
 4. **Grant Full Disk Access.** macOS protects access to disks and cards. The app shows a yellow banner with step-by-step instructions the first time — you enable *PhotoRec Portable* under **System Settings → Privacy & Security → Full Disk Access**. This is required to read your disks.
 
 <p align="center">
-  <img src="docs/full-disk-access.jpg" alt="Full Disk Access banner" width="500">
+  <img src="docs/full-disk-access-2.jpg" alt="Full Disk Access banner" width="500">
 </p>
 
 **Requirements:** macOS 13 (Ventura) or newer. Works on both Apple Silicon (M1/M2/M3/…) and Intel Macs. On Apple Silicon the bundled recovery engine runs through Rosetta 2, which macOS installs automatically if needed.
@@ -73,7 +73,7 @@ By default, recovery only scans the **free space** of the disk — that is, the 
 For difficult cases, enable **Options → Advanced mode** (⇧⌘A). Extra options appear:
 
 <p align="center">
-  <img src="docs/advanced-mode.jpg" alt="Advanced mode options" width="500">
+  <img src="docs/advanced-mode-2.jpg" alt="Advanced mode options" width="500">
 </p>
 
 - **Recover original file names** — PhotoRec recovers the *contents* of files but names them generically (`f0000100.jpg`). With this option on, the app reads the original file names straight from the card's filesystem and matches each recovered file back to its real name — so your photos come out as `DSCF1234.RAF` again instead of `f0000100.raf`. It works on exFAT cards (the standard format for SD/SDXC cards); on other filesystems the recovery still works, just with generic names. This adds an extra read pass over the card, which is why it's optional.
