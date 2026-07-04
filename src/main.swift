@@ -368,10 +368,13 @@ final class AppState: ObservableObject {
                 self.hasFullDiskAccess = verdict
                 if !verdict {
                     self.statusText = L("status.noFDA.hint")
-                } else if self.statusText == L("status.noFDA.hint")
-                            || self.statusText == L("status.noFDA.short") {
-                    // L'accesso è stato concesso: rimuovo l'avviso residuo.
+                } else if !self.isRunning {
+                    // L'accesso è (ora) concesso: ripulisco l'area stato+barra in basso,
+                    // inclusi eventuali residui di un tentativo fallito per mancanza di accesso.
                     self.statusText = ""
+                    self.finished = false
+                    self.progress = 0
+                    self.filesFound = 0
                 }
             }
         }
@@ -702,6 +705,7 @@ final class AppState: ObservableObject {
         wantNamesActive = wantNames
         postProcessing = false
         stalledPolls = 0
+        nearEndSince = nil
 
         startMonitor(destBase: work, diskDev: diskDev)
 
@@ -989,7 +993,13 @@ final class AppState: ObservableObject {
         let escaped = shellCommand
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let appleScript = "do shell script \"\(escaped)\" with administrator privileges"
+        // Prompt esplicativo nel dialogo password. Il titolo in grassetto ("osascript") è
+        // imposto da macOS e non modificabile per un'app non firmata con Developer ID; ma
+        // questa frase compare sotto e chiarisce all'utente cosa sta autorizzando.
+        let prompt = L("auth.prompt")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let appleScript = "do shell script \"\(escaped)\" with prompt \"\(prompt)\" with administrator privileges"
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = ["-e", appleScript]
@@ -1023,6 +1033,9 @@ final class AppState: ObservableObject {
 
     // Numero di cicli consecutivi in cui la scansione non avanza (barra ferma al massimo).
     private var stalledPolls = 0
+    // Istante in cui la percentuale ha raggiunto la soglia "quasi finito" (≥97%); serve a
+    // capire da quanto tempo è lì ferma per mostrare "Quasi fatto…" al posto della stima.
+    private var nearEndSince: Date? = nil
 
     private func pollProgress(destBase: String) {
         let size = imageSize
@@ -1055,9 +1068,26 @@ final class AppState: ObservableObject {
 
                 self.filesFound = count
                 if size > 0 { self.progress = pct }
+
+                // Verso la fine photorec rallenta molto (normale per come funziona lo scan):
+                // la % resta bloccata sul 97-99% a lungo e la stima diventa fuorviante.
+                // Se è ferma lì da oltre un minuto, mostro "Quasi fatto…" invece del count-down.
+                let nearEnd = size > 0 && pct >= 0.97
+                if nearEnd {
+                    if self.nearEndSince == nil { self.nearEndSince = Date() }
+                } else {
+                    self.nearEndSince = nil
+                }
+                let stuckLongEnough = (self.nearEndSince.map { Date().timeIntervalSince($0) >= 60 } ?? false)
+
                 let pctStr = size > 0 ? " — \(Int(self.progress * 100))%" : ""
-                let etaStr = self.etaFromRecentSpeed(offset: lastOffset, size: size)
-                self.statusText = String(format: L("status.recovering"), count, pctStr) + etaStr
+                if stuckLongEnough {
+                    self.statusText = String(format: L("status.recovering"), count, pctStr)
+                        + " · " + L("status.almostDone")
+                } else {
+                    let etaStr = self.etaFromRecentSpeed(offset: lastOffset, size: size)
+                    self.statusText = String(format: L("status.recovering"), count, pctStr) + etaStr
+                }
             }
         }
     }
@@ -1250,17 +1280,19 @@ struct ContentView: View {
                 .frame(height: 40, alignment: .top)
 
                 // Opzioni avanzate — tra l'area stato e il tasto, senza divider.
+                // I toggle usano advBinding: come per input/output e categorie, cambiare
+                // un'opzione dopo un recupero completato ripulisce l'area stato+barra.
                 if state.advancedMode {
                     VStack(alignment: .leading, spacing: 4) {
                         LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading),
                                             GridItem(.flexible(), alignment: .leading)],
                                   alignment: .leading, spacing: 2) {
-                            Toggle(L("adv.fullScan"), isOn: $state.optFullScan).font(ui)
-                            Toggle(L("adv.paranoid"), isOn: $state.optParanoid).font(ui)
-                            Toggle(L("adv.bruteForce"), isOn: $state.optBruteForce).font(ui)
-                            Toggle(L("adv.keepCorrupted"), isOn: $state.optKeepCorrupted).font(ui)
+                            Toggle(L("adv.fullScan"), isOn: advBinding(\.optFullScan)).font(ui)
+                            Toggle(L("adv.paranoid"), isOn: advBinding(\.optParanoid)).font(ui)
+                            Toggle(L("adv.bruteForce"), isOn: advBinding(\.optBruteForce)).font(ui)
+                            Toggle(L("adv.keepCorrupted"), isOn: advBinding(\.optKeepCorrupted)).font(ui)
                         }
-                        Toggle(L("adv.originalNames"), isOn: $state.optOriginalNames).font(ui)
+                        Toggle(L("adv.originalNames"), isOn: advBinding(\.optOriginalNames)).font(ui)
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1359,6 +1391,15 @@ struct ContentView: View {
         if alert.runModal() == .alertFirstButtonReturn {
             state.cancel()
         }
+    }
+
+    // Binding per un'opzione avanzata (Bool) che, oltre a impostarla, ripulisce l'area
+    // stato+barra dopo un recupero completato — come già fanno disco, cartella e categorie.
+    func advBinding(_ keyPath: ReferenceWritableKeyPath<AppState, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { state[keyPath: keyPath] },
+            set: { state[keyPath: keyPath] = $0; state.resetResultStateIfNeeded() }
+        )
     }
 
     func chooseDestination() {

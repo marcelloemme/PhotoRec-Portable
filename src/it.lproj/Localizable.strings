@@ -44,7 +44,9 @@
 "status.selectDisk" = "Seleziona prima un disco.";
 "status.chooseDest" = "Scegli prima una cartella di destinazione.";
 "status.auth" = "Autorizzazione richiesta: inserisci la password amministratore…";
+"auth.prompt" = "PhotoRec Portable ha bisogno del permesso per leggere il disco e recuperare i file. Inserisci la password del tuo Mac per continuare.";
 "status.recovering" = "Recupero in corso… %d file trovati finora%@.";
+"status.almostDone" = "quasi fatto…";
 "status.sorting" = "Riordino i file recuperati per tipo…";
 "status.matchingNames" = "Recupero i nomi originali dei file…";
 "status.restoringDates" = "Ripristino le date originali delle foto…";
