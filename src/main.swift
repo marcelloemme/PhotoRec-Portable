@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 
 // Helper di localizzazione: cerca la chiave in Localizable.strings (en/it a seconda del sistema).
 func L(_ key: String) -> String {
@@ -67,12 +68,19 @@ final class AppState: ObservableObject {
     @Published var finished = false
     @Published var resultDir: URL? = nil
 
+    // Fase di post-elaborazione (dopo che photorec ha finito la scansione): recupero nomi
+    // originali dal filesystem + ripristino date. In questa fase la barra è al massimo e la
+    // scansione non avanza più, quindi il monitor mostra un messaggio dedicato invece della
+    // percentuale ferma (per non far sospettare un blocco).
+    @Published var postProcessing = false
+
     // Modalità avanzata + opzioni (visibili solo se advancedMode = true).
     @Published var advancedMode = false
     @Published var optFullScan = false          // scansione completa (wholespace) invece di solo cancellati
     @Published var optParanoid = false          // verifica ogni file
     @Published var optBruteForce = false        // brute force (file frammentati)
     @Published var optKeepCorrupted = false     // mantieni file corrotti
+    @Published var optOriginalNames = false     // recupera nomi originali via TestDisk (raddoppia spazio)
 
     // Accesso completo al disco: nil = non verificato, true = ok, false = mancante.
     @Published var hasFullDiskAccess: Bool? = nil
@@ -89,6 +97,8 @@ final class AppState: ObservableObject {
     private var recoveryStart: Date? = nil     // istante d'inizio del recupero
     // Campioni (istante, offset letto) per stimare la velocità RECENTE (finestra mobile).
     private var speedSamples: [(t: Date, offset: Int64)] = []
+    // true quando il recupero corrente ha attivo il recupero nomi (fase post-elaborazione).
+    private var wantNamesActive = false
 
     // Repo GitHub per gli aggiornamenti.
     let updateRepo = "marcelloemme/PhotoRec-Portable"
@@ -98,6 +108,7 @@ final class AppState: ObservableObject {
     }
 
     var photorecPath: String { Bundle.main.bundlePath + "/Contents/Resources/bin/photorec" }
+    var testdiskPath: String { Bundle.main.bundlePath + "/Contents/Resources/bin/testdisk" }
 
     // Riporta l'interfaccia allo stato "pulito" dopo un recupero completato,
     // quando l'utente cambia una qualsiasi impostazione. Non tocca un recupero in corso.
@@ -257,6 +268,33 @@ final class AppState: ObservableObject {
         return free.int64Value
     }
 
+    // Spazio libero (byte) del filesystem della SD sorgente = totale − usato dai file attuali.
+    // È il tetto massimo di dati recuperabili in modalità "solo cancellati": i file cancellati
+    // vivono nello spazio non allocato, che è appunto il libero del filesystem.
+    // Restituisce 0 se la SD non è montata / illeggibile (il chiamante userà un fallback).
+    nonisolated static func sourceFreeSpaceBytes(diskDev: String) -> Int64 {
+        // Trovo il mount point di una partizione montata del disco sorgente.
+        guard let info = runCapture("/usr/sbin/diskutil", ["list", "-plist", diskDev]),
+              let d = info.data(using: .utf8),
+              let root = try? PropertyListSerialization.propertyList(from: d, options: [], format: nil) as? [String: Any],
+              let allDP = root["AllDisksAndPartitions"] as? [[String: Any]] else { return 0 }
+        var partIDs: [String] = []
+        for disk in allDP {
+            if let parts = disk["Partitions"] as? [[String: Any]] {
+                for p in parts { if let id = p["DeviceIdentifier"] as? String { partIDs.append(id) } }
+            }
+        }
+        for pid in partIDs {
+            guard let pinfo = runCapture("/usr/sbin/diskutil", ["info", "-plist", pid]),
+                  let pd = pinfo.data(using: .utf8),
+                  let dict = try? PropertyListSerialization.propertyList(from: pd, options: [], format: nil) as? [String: Any],
+                  let mount = dict["MountPoint"] as? String, !mount.isEmpty else { continue }
+            let free = freeSpaceBytes(atPath: mount)
+            if free > 0 { return free }
+        }
+        return 0
+    }
+
     // Keyword photorec per lo schema partizioni del disco (per lo scope "solo cancellati").
     // FDisk/MBR -> partition_i386 ; GPT -> partition_gpt ; APM -> partition_mac ; altro -> partition_none.
     nonisolated static func partitionKeyword(forDisk diskDev: String) -> String {
@@ -269,6 +307,43 @@ final class AppState: ObservableObject {
         if content.contains("guid")  { return "partition_gpt" }
         if content.contains("apple") { return "partition_mac" }
         return "partition_none"
+    }
+
+    // Per il recupero nomi: individua la partizione exFAT del disco e il suo settore
+    // di avvio (per leggerne la struttura). Restituisce (devicePartizione, settoreAvvio)
+    // oppure nil se non c'è una partizione exFAT su questo disco.
+    // Esempio: ("/dev/rdisk4s1", 32768).
+    nonisolated static func exfatPartition(forDisk diskDev: String) -> (device: String, startSector: UInt64)? {
+        // Elenco delle partizioni del disco.
+        guard let listPlist = runCapture("/usr/sbin/diskutil", ["list", "-plist", diskDev]),
+              let ld = listPlist.data(using: .utf8),
+              let lroot = try? PropertyListSerialization.propertyList(from: ld, options: [], format: nil) as? [String: Any],
+              let allDP = lroot["AllDisksAndPartitions"] as? [[String: Any]] else { return nil }
+
+        var partIDs: [String] = []
+        for disk in allDP {
+            if let parts = disk["Partitions"] as? [[String: Any]] {
+                for p in parts { if let id = p["DeviceIdentifier"] as? String { partIDs.append(id) } }
+            }
+        }
+        // Fallback: se non elencava partizioni, provo il disco stesso e "<disco>s1".
+        if partIDs.isEmpty { partIDs = [diskDev, "\(diskDev)s1"] }
+
+        for pid in partIDs {
+            guard let info = runCapture("/usr/sbin/diskutil", ["info", "-plist", pid]),
+                  let d = info.data(using: .utf8),
+                  let dict = try? PropertyListSerialization.propertyList(from: d, options: [], format: nil) as? [String: Any]
+            else { continue }
+            let fsName = (dict["FilesystemName"] as? String)?.lowercased() ?? ""
+            let content = (dict["Content"] as? String)?.lowercased() ?? ""
+            let isExfat = fsName.contains("exfat") || content.contains("exfat")
+            guard isExfat else { continue }
+            // Leggo il device della PARTIZIONE (rdiskNsM): il boot sector exFAT è già a
+            // offset 0 di quel device, quindi il settore d'avvio è 0 (nessun offset da sommare).
+            let rdev = "/dev/r" + pid    // es. /dev/rdisk4s1 (raw)
+            return (rdev, 0)
+        }
+        return nil
     }
 
     // MARK: Accesso completo al disco
@@ -514,11 +589,22 @@ final class AppState: ObservableObject {
 
         let diskDevCheck = diskID.replacingOccurrences(of: "/dev/", with: "")
         // C1 — Controllo spazio: se la destinazione non ha abbastanza spazio, avviso e blocco.
-        // Stima: scansione completa può produrre fino alla dimensione del device; per "solo
-        // cancellati" molto meno, ma resto prudente e richiedo almeno il 50% della dimensione device.
+        // Stima del massimo recuperabile:
+        //  - scansione completa (wholespace): legge tutto il device → fino alla dimensione del device;
+        //  - solo cancellati (freespace): i dati recuperabili stanno nello spazio NON allocato della
+        //    SD, cioè il libero del filesystem (totale − usato). Uso quello quando disponibile,
+        //    con fallback prudente a metà della dimensione device se la SD non è leggibile.
         let deviceSize = diskSizeBytes(diskDevCheck)
         let freeSpace = Self.freeSpaceBytes(atPath: dest.path)
-        let needed = (advancedMode && optFullScan) ? deviceSize : deviceSize / 2
+        let needed: Int64
+        if advancedMode && optFullScan {
+            needed = deviceSize
+        } else {
+            let sourceFree = Self.sourceFreeSpaceBytes(diskDev: diskDevCheck)
+            needed = sourceFree > 0 ? sourceFree : deviceSize / 2
+        }
+        // Nota: il recupero dei nomi originali NON richiede spazio extra — lo scanner exFAT
+        // legge solo i nomi dal filesystem, senza copiare alcun file.
         if deviceSize > 0 && freeSpace > 0 && freeSpace < needed {
             let neededStr = ByteCountFormatter.string(fromByteCount: needed, countStyle: .file)
             let freeStr = ByteCountFormatter.string(fromByteCount: freeSpace, countStyle: .file)
@@ -569,15 +655,35 @@ final class AppState: ObservableObject {
         fi
         """
 
+        // Recupero nomi originali (opzione avanzata): dopo photorec, mentre il device è
+        // ancora smontato, ri-eseguo l'app stessa in modalità "--exfat-scan". Legge la
+        // struttura exFAT del device (senza copiare file) e scrive in namesTSV l'elenco dei
+        // file cancellati con dimensione + firme di contenuto + percorso. L'incrocio per
+        // contenuto con i file photorec avviene poi in Swift, lato GUI (vedi buildMatches).
+        // Girando come figlio del comando root già autorizzato, lo scan ha sia root sia
+        // l'accesso completo al disco dell'app: nessuna seconda password.
+        let wantNames = advancedMode && optOriginalNames
+        let namesTSV = work + "/.nomi.tsv"
+        let appExe = Bundle.main.executablePath ?? ""
+        var scanBlock = ""
+        if wantNames, let ex = Self.exfatPartition(forDisk: diskDev) {
+            // Nota: uso il device della PARTIZIONE exFAT e il suo settore d'avvio.
+            scanBlock = """
+             ; \
+            '\(appExe)' --exfat-scan '\(ex.device)' \(ex.startSector) '\(namesTSV)' 2>/dev/null || true
+            """
+        }
+
         // Un solo comando come root (una sola password):
         // prepara cartella → smonta la card → lancia photorec (con /log) scrivendone il PID →
-        // aspetta la fine → eventuale fallback completo → rimonta → riassegna i file all'utente.
+        // aspetta la fine → eventuale fallback completo → eventuale scan nomi (exFAT) →
+        // rimonta → riassegna i file all'utente.
         let shell = """
         rm -rf '\(work)' ; mkdir -p '\(work)' ; cd '\(work)' ; \
         /usr/sbin/diskutil unmountDisk '\(diskDev)' || true ; \
         '\(pr)' /log /d '\(recupPath)' /cmd '\(rawDevice)' \(mainBatch) > '\(logPath)' 2>&1 & \
         PRPID=$! ; echo $PRPID > '\(pidF)' ; \
-        wait $PRPID ; PRSTATUS=$?\(fallbackBlock) ; \
+        wait $PRPID ; PRSTATUS=$?\(fallbackBlock)\(scanBlock) ; \
         /usr/sbin/diskutil mountDisk '\(diskDev)' || true ; \
         /usr/sbin/chown -R \(uid) '\(work)' 2>/dev/null || true ; \
         exit $PRSTATUS
@@ -593,6 +699,9 @@ final class AppState: ObservableObject {
         recoveryStart = Date()
         speedSamples = []
         statusText = L("status.auth")
+        wantNamesActive = wantNames
+        postProcessing = false
+        stalledPolls = 0
 
         startMonitor(destBase: work, diskDev: diskDev)
 
@@ -622,12 +731,28 @@ final class AppState: ObservableObject {
                 }
 
                 // In tutti gli altri casi (successo, annullato durante, o errore generico)
-                // riorganizzo i file già recuperati e faccio pulizia.
-                self.statusText = L("status.sorting")
+                // faccio la post-elaborazione: [nomi] → ordinamento → ripristino date.
+                let renameNames = wantNames
+                self.postProcessing = true
+                self.progress = 1
+                self.statusText = renameNames ? L("status.matchingNames") : L("status.sorting")
                 DispatchQueue.global().async {
-                    let moved = Self.organizeAndCleanup(workDir: work, destination: destPath)
+                    // 1) Recupero nomi originali (solo se richiesto): incrocio per CONTENUTO i
+                    //    file photorec con l'elenco letto dallo scanner exFAT (namesTSV).
+                    var matches: [String: ExfatNames.Match] = [:]
+                    if renameNames {
+                        matches = ExfatNames.buildMatches(workDir: work, tsvPath: namesTSV)
+                    }
+                    // 2) Ordinamento per tipo (+ rinomina dove c'è il nome originale).
+                    DispatchQueue.main.async { self.statusText = L("status.sorting") }
+                    let moved = Self.organizeAndCleanup(workDir: work, destination: destPath, matches: matches)
+                    // 3) Ripristino date originali dall'EXIF — SEMPRE, come ultimo passo.
+                    //    Opera solo sui file già recuperati (non tocca la card).
+                    DispatchQueue.main.async { self.statusText = L("status.restoringDates") }
+                    _ = Self.restoreDatesInDestination(destPath)
                     DispatchQueue.main.async {
                         self.isRunning = false
+                        self.postProcessing = false
                         self.finished = true
                         self.filesFound = moved
                         self.progress = 1
@@ -671,11 +796,79 @@ final class AppState: ObservableObject {
         // quando il comando root termina perché photorec è stato fermato.
     }
 
+    // MARK: Recupero nomi originali (incrocio per hash con TestDisk)
+
+    // Calcola l'hash dei file recuperati da TestDisk (che hanno i nomi originali) e dei file
+    // recuperati da photorec (nomi generici); dove i contenuti combaciano, rinomina il file
+    // photorec col nome originale. Restituisce quanti file sono stati rinominati.
+    nonisolated static func applyOriginalNames(workDir: String, testdiskDir: String) -> Int {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: testdiskDir) else { return 0 }
+
+        // 1) Mappa hash -> nome originale, dai file TestDisk (ricorsivo). Escludo file di sistema.
+        var hashToName: [String: String] = [:]
+        if let en = fm.enumerator(atPath: testdiskDir) {
+            for case let rel as String in en {
+                let full = "\(testdiskDir)/\(rel)"
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue else { continue }
+                // Escludo file di sistema: uso il PATH completo (relativo), non solo il basename,
+                // perché i file dentro .fseventsd hanno come nome solo l'UUID.
+                let low = rel.lowercased()
+                let base = (rel as NSString).lastPathComponent
+                if base == "testdisk.log" || base.hasPrefix("._")
+                    || low.contains("fseventsd") || low.contains(".trashes")
+                    || low.contains(".spotlight") || base == ".ds_store" { continue }
+                guard let h = fileHash(full) else { continue }
+                // se due file hanno lo stesso hash, tengo il primo nome (indifferente).
+                if hashToName[h] == nil { hashToName[h] = base }
+            }
+        }
+        guard !hashToName.isEmpty else { return 0 }
+
+        // 2) Scorro i file photorec e rinomino quelli il cui hash combacia.
+        var renamed = 0
+        var idx = 1
+        while true {
+            let dir = "\(workDir)/recup_dir.\(idx)"
+            guard fm.fileExists(atPath: dir) else { break }
+            if let files = try? fm.contentsOfDirectory(atPath: dir) {
+                for f in files {
+                    if f == "report.xml" || f == "photorec.log" { continue }
+                    let src = "\(dir)/\(f)"
+                    guard let h = fileHash(src), let origName = hashToName[h] else { continue }
+                    // rinomino mantenendo un nome non in conflitto nella stessa cartella.
+                    let target = uniqueDestination(dir: dir, filename: origName)
+                    if (try? fm.moveItem(atPath: src, toPath: target)) != nil { renamed += 1 }
+                }
+            }
+            idx += 1
+        }
+        return renamed
+    }
+
+    // Hash del contenuto di un file (MD5, sufficiente per il match di uguaglianza).
+    nonisolated static func fileHash(_ path: String) -> String? {
+        guard let data = fm_read(path) else { return nil }
+        var hasher = Insecure.MD5()
+        hasher.update(data: data)
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func fm_read(_ path: String) -> Data? {
+        // Leggo il file in modo efficiente (mappato in memoria quando possibile).
+        return try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+    }
+
     // MARK: Riorganizzazione per estensione (merge non distruttivo)
 
     // Sposta i file da workDir/recup_dir.N/ in destination/<estensione>/,
     // gestendo le collisioni con rinomina. Restituisce quanti file sono stati sistemati.
-    nonisolated static func organizeAndCleanup(workDir: String, destination: String) -> Int {
+    // `matches`: per i file photorec di cui abbiamo ritrovato il nome originale (via exFAT),
+    // mappa il percorso del file photorec al nome/percorso originale. Quando presente, il
+    // file viene salvato col nome originale invece di quello generico (f0012345.jpg).
+    nonisolated static func organizeAndCleanup(workDir: String, destination: String,
+                                               matches: [String: ExfatNames.Match] = [:]) -> Int {
         let fm = FileManager.default
         var moved = 0
         var idx = 1
@@ -686,23 +879,27 @@ final class AppState: ObservableObject {
                 for f in files {
                     if f == "report.xml" || f == "photorec.log" { continue }
                     let src = "\(dir)/\(f)"
-                    var ext = (f as NSString).pathExtension.lowercased()
+                    // Nome finale: se abbiamo ritrovato il nome originale, uso quello.
+                    let match = matches[src]
+                    let finalName = match?.originalName ?? f
+                    var ext = (finalName as NSString).pathExtension.lowercased()
                     if ext.isEmpty { ext = "altri" }
-                    // PhotoRec: i file corrotti iniziano con 'b', le miniature con 't'.
-                    // I corrotti vanno in una sottocartella dedicata dentro il tipo.
+                    // PhotoRec: i file corrotti iniziano con 'b'. Vanno in una sottocartella
+                    // dedicata dentro il tipo. (Il marker 'b' è sul nome generico di photorec.)
                     let subdir: String
-                    if f.hasPrefix("b") {
+                    if match == nil && f.hasPrefix("b") {
                         subdir = "\(destination)/\(ext)/\(L("folder.corrupted"))"
                     } else {
                         subdir = "\(destination)/\(ext)"
                     }
                     try? fm.createDirectory(atPath: subdir, withIntermediateDirectories: true)
-                    let target = uniqueDestination(dir: subdir, filename: f)
+                    let target = uniqueDestination(dir: subdir, filename: finalName)
                     do {
                         try fm.moveItem(atPath: src, toPath: target)
                         moved += 1
                     } catch {
-                        if (try? fm.copyItem(atPath: src, toPath: target)) != nil { moved += 1 }
+                        _ = try? fm.copyItem(atPath: src, toPath: target)
+                        if fm.fileExists(atPath: target) { moved += 1 }
                     }
                 }
             }
@@ -711,6 +908,41 @@ final class AppState: ObservableObject {
         // Rimuovo la cartella di lavoro (recup_dir.N, log, pid).
         try? fm.removeItem(atPath: workDir)
         return moved
+    }
+
+    // MARK: Ripristino date originali (EXIF)
+
+    // Scorre le foto già sistemate in `destination` e imposta la loro data di CREAZIONE alla
+    // data di scatto EXIF (DateTimeOriginal). Sempre attivo, in entrambe le modalità: opera
+    // SOLO sui file già recuperati (non tocca la card). I file senza EXIF restano invariati.
+    // Restituisce quante foto hanno ottenuto la data originale.
+    nonisolated static func restoreDatesInDestination(_ destination: String) -> Int {
+        let fm = FileManager.default
+        guard let en = fm.enumerator(atPath: destination) else { return 0 }
+        var restored = 0
+        for case let rel as String in en {
+            let ext = (rel as NSString).pathExtension.lowercased()
+            guard isPhotoExt(ext) else { continue }
+            let full = "\(destination)/\(rel)"
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue else { continue }
+            if let d = ExifDate.captureDate(path: full) {
+                ExifDate.setCreationDate(d, path: full)
+                restored += 1
+            }
+        }
+        return restored
+    }
+
+    // Estensioni foto/RAW che possono contenere EXIF con la data di scatto.
+    nonisolated static func isPhotoExt(_ ext: String) -> Bool {
+        let photo: Set<String> = [
+            "jpg", "jpeg", "tif", "tiff", "heic", "heif", "png", "dng",
+            // RAW comuni
+            "raf", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2",
+            "orf", "rw2", "raw", "pef", "x3f", "3fr", "mrw", "mos", "erf", "kdc"
+        ]
+        return photo.contains(ext)
     }
 
     // Restituisce un percorso non esistente: se "foto.jpg" esiste, prova "foto-1.jpg", ecc.
@@ -789,6 +1021,9 @@ final class AppState: ObservableObject {
 
     func stopMonitor() { monitorTimer?.invalidate(); monitorTimer = nil }
 
+    // Numero di cicli consecutivi in cui la scansione non avanza (barra ferma al massimo).
+    private var stalledPolls = 0
+
     private func pollProgress(destBase: String) {
         let size = imageSize
         DispatchQueue.global().async { [weak self] in
@@ -796,6 +1031,28 @@ final class AppState: ObservableObject {
             let pct = size > 0 ? min(0.99, Double(lastOffset) / Double(size)) : 0
             DispatchQueue.main.async {
                 guard let self = self, self.isRunning else { return }
+
+                // Se siamo già in post-elaborazione, non tocco più barra/testo qui:
+                // il messaggio dedicato lo gestisce chi avvia la fase.
+                if self.postProcessing { return }
+
+                // Rilevo il passaggio alla fase di post-elaborazione: la scansione è al
+                // massimo e non produce nuovi offset da alcuni cicli (photorec ha finito,
+                // lo shell prosegue con lo scan nomi / rimonta). Solo se è attivo il
+                // recupero nomi, che è ciò che richiede tempo dopo la barra.
+                let atMax = size > 0 && lastOffset > 0 && pct >= 0.99
+                if self.wantNamesActive && atMax && count == self.filesFound {
+                    self.stalledPolls += 1
+                    if self.stalledPolls >= 2 {
+                        self.postProcessing = true
+                        self.progress = 1
+                        self.statusText = L("status.matchingNames")
+                        return
+                    }
+                } else {
+                    self.stalledPolls = 0
+                }
+
                 self.filesFound = count
                 if size > 0 { self.progress = pct }
                 let pctStr = size > 0 ? " — \(Int(self.progress * 100))%" : ""
@@ -975,7 +1232,11 @@ struct ContentView: View {
                 Divider()
                 // Area stato+progresso ad ALTEZZA FISSA: non fa mai cambiare la finestra.
                 VStack(alignment: .leading, spacing: 2) {
-                    if state.isRunning || state.finished {
+                    if state.postProcessing {
+                        // Fase di post-elaborazione (nomi + date): barra indeterminata animata,
+                        // così è chiaro che l'app sta lavorando e non è bloccata.
+                        ProgressView().progressViewStyle(.linear)
+                    } else if state.isRunning || state.finished {
                         ProgressView(value: state.progress)
                     }
                     if !state.statusText.isEmpty {
@@ -990,13 +1251,16 @@ struct ContentView: View {
 
                 // Opzioni avanzate — tra l'area stato e il tasto, senza divider.
                 if state.advancedMode {
-                    LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading),
-                                        GridItem(.flexible(), alignment: .leading)],
-                              alignment: .leading, spacing: 2) {
-                        Toggle(L("adv.fullScan"), isOn: $state.optFullScan).font(ui)
-                        Toggle(L("adv.paranoid"), isOn: $state.optParanoid).font(ui)
-                        Toggle(L("adv.bruteForce"), isOn: $state.optBruteForce).font(ui)
-                        Toggle(L("adv.keepCorrupted"), isOn: $state.optKeepCorrupted).font(ui)
+                    VStack(alignment: .leading, spacing: 4) {
+                        LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading),
+                                            GridItem(.flexible(), alignment: .leading)],
+                                  alignment: .leading, spacing: 2) {
+                            Toggle(L("adv.fullScan"), isOn: $state.optFullScan).font(ui)
+                            Toggle(L("adv.paranoid"), isOn: $state.optParanoid).font(ui)
+                            Toggle(L("adv.bruteForce"), isOn: $state.optBruteForce).font(ui)
+                            Toggle(L("adv.keepCorrupted"), isOn: $state.optKeepCorrupted).font(ui)
+                        }
+                        Toggle(L("adv.originalNames"), isOn: $state.optOriginalNames).font(ui)
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1133,8 +1397,9 @@ struct CategoryButton: View {
     }
 }
 
-@main
-struct PhotoRecFacileApp: App {
+// MARK: - Scena SwiftUI dell'app
+
+struct PhotoRecFacileScene: App {
     @StateObject var state = AppState()
 
     var body: some Scene {
@@ -1146,5 +1411,29 @@ struct PhotoRecFacileApp: App {
                         .keyboardShortcut("a", modifiers: [.command, .shift])
                 }
             }
+    }
+}
+
+// MARK: - Entry point
+//
+// Con -parse-as-library l'ingresso è il main() statico del tipo @main.
+// Modalità nascosta "scanner": se l'app è invocata con --exfat-scan, non apre la GUI
+// ma legge la struttura exFAT del device e scrive l'elenco nomi (per il recupero nomi
+// originali). Serve perché la lettura del device grezzo richiede sia root sia l'accesso
+// completo al disco dell'APP: eseguendo l'app stessa come figlio del comando root già
+// autorizzato, entrambi i requisiti sono soddisfatti senza chiedere una seconda password.
+// In tutti gli altri casi avvia normalmente l'interfaccia.
+@main
+struct PhotoRecFacileMain {
+    static func main() {
+        let args = CommandLine.arguments
+        if args.count >= 5 && args[1] == "--exfat-scan" {
+            let device = args[2]
+            let startSector = UInt64(args[3]) ?? 0
+            let outPath = args[4]
+            ExfatNames.runScan(devicePath: device, startSector: startSector, outPath: outPath)
+            exit(0)
+        }
+        PhotoRecFacileScene.main()
     }
 }

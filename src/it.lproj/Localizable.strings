@@ -46,6 +46,8 @@
 "status.auth" = "Autorizzazione richiesta: inserisci la password amministratore…";
 "status.recovering" = "Recupero in corso… %d file trovati finora%@.";
 "status.sorting" = "Riordino i file recuperati per tipo…";
+"status.matchingNames" = "Recupero i nomi originali dei file…";
+"status.restoringDates" = "Ripristino le date originali delle foto…";
 "status.done" = "Recupero completato. %d file salvati, divisi per tipo.";
 "status.stopped" = "Recupero interrotto. %d file salvati (divisi per tipo).";
 "status.cancelled" = "Operazione annullata (nessuna password inserita).";
@@ -62,6 +64,7 @@
 "adv.paranoid" = "Paranoid (verifica ogni file)";
 "adv.bruteForce" = "Brute force (file frammentati)";
 "adv.keepCorrupted" = "Mantieni i file corrotti";
+"adv.originalNames" = "Recupera i nomi originali dei file";
 "folder.corrupted" = "corrotti";
 "status.remaining" = "circa %@ rimanenti";
 "time.under1min" = "meno di 1 min";

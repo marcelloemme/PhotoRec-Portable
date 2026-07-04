@@ -46,6 +46,8 @@
 "status.auth" = "Authorization required: enter your administrator password…";
 "status.recovering" = "Recovering… %d files found so far%@.";
 "status.sorting" = "Sorting recovered files by type…";
+"status.matchingNames" = "Recovering original file names…";
+"status.restoringDates" = "Restoring original photo dates…";
 "status.done" = "Done. %d files saved, sorted by type.";
 "status.stopped" = "Recovery stopped. %d files saved (sorted by type).";
 "status.cancelled" = "Cancelled (no password entered).";
@@ -62,6 +64,7 @@
 "adv.paranoid" = "Paranoid (verify each file)";
 "adv.bruteForce" = "Brute force (fragmented files)";
 "adv.keepCorrupted" = "Keep corrupted files";
+"adv.originalNames" = "Recover original file names";
 "folder.corrupted" = "corrupted";
 "status.remaining" = "about %@ left";
 "time.under1min" = "less than 1 min";

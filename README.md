@@ -60,7 +60,9 @@ Then press **Start recovery**. You'll be asked for your administrator password (
 
 ### The result
 
-When recovery finishes, the app organizes everything neatly in your destination folder: recovered files are **sorted into subfolders by type** (`jpg/`, `raf/`, `pdf/`, and so on). Files that were only partially recoverable are placed in a separate `corrupted/` subfolder. Where possible, photos keep their original date taken (read from EXIF metadata). Press **Open folder** to see the results.
+When recovery finishes, the app organizes everything neatly in your destination folder: recovered files are **sorted into subfolders by type** (`jpg/`, `raf/`, `pdf/`, and so on). Files that were only partially recoverable are placed in a separate `corrupted/` subfolder. Press **Open folder** to see the results.
+
+**Original photo dates are restored automatically.** For photos and RAW files, the app reads the *date taken* from the EXIF metadata inside each file and sets it as the file's creation and modification date. So even though the files were just recovered, Finder shows the real date the photo was taken, and everything sorts chronologically as expected. Files without EXIF data are left untouched.
 
 By default, recovery only scans the **free space** of the disk — that is, the area where deleted files live. This is much faster than scanning the whole disk and is the right choice for the most common case ("I accidentally deleted my photos"). If nothing is found there, the app automatically falls back to a full scan.
 
@@ -68,18 +70,19 @@ By default, recovery only scans the **free space** of the disk — that is, the 
 
 ## Advanced mode
 
-For difficult cases, enable **Options → Advanced mode** (⇧⌘A). Four extra options appear:
+For difficult cases, enable **Options → Advanced mode** (⇧⌘A). Extra options appear:
 
 <p align="center">
   <img src="docs/advanced-mode.jpg" alt="Advanced mode options" width="500">
 </p>
 
+- **Recover original file names** — PhotoRec recovers the *contents* of files but names them generically (`f0000100.jpg`). With this option on, the app reads the original file names straight from the card's filesystem and matches each recovered file back to its real name — so your photos come out as `DSCF1234.RAF` again instead of `f0000100.raf`. It works on exFAT cards (the standard format for SD/SDXC cards); on other filesystems the recovery still works, just with generic names. This adds an extra read pass over the card, which is why it's optional.
 - **Full scan** — scans the entire disk instead of just the free space. Use this when the card was reformatted, or when the quick scan didn't find your files. It's slower but more thorough.
 - **Paranoid** — verifies every recovered file, reducing false positives.
 - **Brute force** — attempts to recover more heavily fragmented files. Slow, and not always reliable, but can rescue files a normal scan misses.
 - **Keep corrupted files** — keeps files that couldn't be fully recovered instead of discarding them. They're placed in the `corrupted/` subfolders. Useful when a partial file is better than nothing.
 
-Leave Advanced mode off for everyday recovery — the defaults are tuned for it.
+Leave Advanced mode off for everyday recovery — the defaults are tuned for it. (Original photo dates are restored in both modes; only the name recovery above is advanced-only.)
 
 ---
 
@@ -96,9 +99,10 @@ PhotoRec Portable is a graphical wrapper. The actual recovery is done by **Photo
 1. unmounts the source disk so the raw device can be read,
 2. runs PhotoRec in batch mode with the options you selected,
 3. reads PhotoRec's progress from its output to drive the progress bar,
-4. remounts the disk and reorganizes the recovered files by type.
+4. optionally reads the filesystem to recover the original file names (see Advanced mode),
+5. remounts the disk, reorganizes the recovered files by type, and restores photo dates from EXIF.
 
-The graphical interface is written in SwiftUI and built with `swiftc` (no Xcode required). PhotoRec ignores the filesystem and searches the underlying data directly, which is why it can recover files even from a formatted or damaged card — and why recovered files come out with generic names (`f0000100.jpg`) rather than their originals.
+The graphical interface is written in SwiftUI and built with `swiftc` (no Xcode required). PhotoRec ignores the filesystem and searches the underlying data directly, which is why it can recover files even from a formatted or damaged card — and why recovered files come out with generic names (`f0000100.jpg`) by default. To bring the real names back, the app separately reads the card's directory entries (read-only) and matches each recovered file to its original name by comparing the file contents — so nothing is ever written to the card during recovery.
 
 ### Credits and license
 
