@@ -94,7 +94,7 @@ PhotoRec Portable checks for new versions on launch. When one is available, a ba
 
 ## How it works, and credits
 
-PhotoRec Portable is a graphical wrapper. The actual recovery is done by **PhotoRec 7.2-WIP** (May 2021), whose command-line binary is bundled inside the app. When you press *Start recovery*, the app:
+PhotoRec Portable is a graphical wrapper. The actual recovery is done by **PhotoRec 7.2** (February 2024), whose command-line binary is bundled inside the app. When you press *Start recovery*, the app:
 
 1. unmounts the source disk so the raw device can be read,
 2. runs PhotoRec in batch mode with the options you selected,
