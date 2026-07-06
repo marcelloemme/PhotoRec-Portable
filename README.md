@@ -22,8 +22,12 @@ It's **portable**: everything it needs is inside the app. No Homebrew, no Termin
      1. Open **Terminal** (Applications → Utilities → Terminal).
      2. Type this, **with a trailing space**, but don't press Return yet:
         `xattr -dr com.apple.quarantine `
-     3. **Drag `PhotoRec Portable.app`** from Finder onto the Terminal window (this fills in its path), then press **Return**.
-     4. Now open the app normally (double-click). You only need to do this once.
+     3. **Drag `PhotoRec Portable.app`** from Finder onto the Terminal window. This fills in its path automatically. You should now see a full line like this (note the space between the command and the path — the terminal needs it):
+        ```
+        user@mac ~ % xattr -dr com.apple.quarantine /Applications/PhotoRec\ Portable.app
+        ```
+     4. Now press **Return**. If nothing is printed, it worked (that's normal — no news is good news).
+     5. Open the app normally (double-click). You only need to do this once.
 
      If step 3 prints `Permission denied`, the app is in a location your user can't modify. Easiest fix: move `PhotoRec Portable.app` to your **Desktop** or **Downloads** folder and run the command again. (As a last resort you can prefix the command with `sudo ` and enter your Mac password, but moving the app is simpler.)
 4. **Grant Full Disk Access.** macOS protects access to disks and cards. The app shows a yellow banner with step-by-step instructions the first time — you enable *PhotoRec Portable* under **System Settings → Privacy & Security → Full Disk Access**. This is required to read your disks.
