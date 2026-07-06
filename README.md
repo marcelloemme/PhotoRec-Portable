@@ -15,17 +15,17 @@ It's **portable**: everything it needs is inside the app. No Homebrew, no Termin
 ## Download and install
 
 1. Go to the [**Releases**](https://github.com/marcelloemme/PhotoRec-Portable/releases) page and download the latest `PhotoRec-Portable-x.y.z.zip`.
-2. Unzip it (double-click) to get `PhotoRec Portable.app`. Move it to your `Applications` folder if you like.
-3. **First launch:** because the app isn't signed with a paid Apple Developer certificate, macOS blocks it the first time. To open it:
-   - **Right-click** (or Control-click) the app → **Open** → **Open** again in the dialog.
-   - On recent macOS versions you may instead need to go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+2. Unzip it (double-click). You get a **PhotoRec Portable** folder containing `PhotoRec Portable.app` and a helper called **`Apri PhotoRec Portable.command`**. Keep them together. Move the folder to `Applications` if you like.
+3. **First launch:** because the app isn't signed with a paid Apple Developer certificate, macOS blocks it the first time. Pick whichever works for you:
+   - **Easiest (works on macOS Sequoia and Tahoe):** double-click **`Apri PhotoRec Portable.command`** in the folder. It removes the download quarantine from the app and opens it. The first time, Terminal asks you to confirm you want to run it — click **Open**. You only need this once.
+   - **Or manually:** **right-click** (Control-click) the app → **Open** → **Open** again. On some macOS versions you instead go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. *(On macOS Tahoe / 26 this manual route sometimes fails with "can't be opened" — in that case use the `.command` helper above.)*
 4. **Grant Full Disk Access.** macOS protects access to disks and cards. The app shows a yellow banner with step-by-step instructions the first time — you enable *PhotoRec Portable* under **System Settings → Privacy & Security → Full Disk Access**. This is required to read your disks.
 
 <p align="center">
   <img src="docs/full-disk-access-2.jpg" alt="Full Disk Access banner" width="500">
 </p>
 
-**Requirements:** macOS 13 (Ventura) or newer. Works on both Apple Silicon (M1/M2/M3/…) and Intel Macs. On Apple Silicon the bundled recovery engine runs through Rosetta 2, which macOS installs automatically if needed.
+**Requirements:** macOS 13 (Ventura) or newer, including macOS 26 (Tahoe). Works on both Apple Silicon (M1/M2/M3/…) and Intel Macs. On Apple Silicon the bundled recovery engine runs through Rosetta 2, which macOS installs automatically if needed.
 
 ---
 

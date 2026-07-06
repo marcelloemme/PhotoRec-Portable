@@ -519,8 +519,20 @@ final class AppState: ObservableObject {
 
     nonisolated static func findApp(in dir: String) -> String? {
         let fm = FileManager.default
-        guard let items = try? fm.contentsOfDirectory(atPath: dir) else { return nil }
-        for i in items where i.hasSuffix(".app") { return "\(dir)/\(i)" }
+        // Cerco al primo livello…
+        if let items = try? fm.contentsOfDirectory(atPath: dir) {
+            for i in items where i.hasSuffix(".app") { return "\(dir)/\(i)" }
+            // …altrimenti un livello più in basso (lo zip può contenere una cartella
+            // che racchiude l'app, es. "PhotoRec Portable/PhotoRec Portable.app").
+            for i in items {
+                let sub = "\(dir)/\(i)"
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: sub, isDirectory: &isDir), isDir.boolValue,
+                   let subItems = try? fm.contentsOfDirectory(atPath: sub) {
+                    for j in subItems where j.hasSuffix(".app") { return "\(sub)/\(j)" }
+                }
+            }
+        }
         return nil
     }
 
